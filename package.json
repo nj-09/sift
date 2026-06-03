@@ -2,7 +2,7 @@
   "$schema": "https://www.raycast.com/schemas/extension.json",
   "name": "sift",
   "title": "Sift",
-  "description": "Sift any file on your Mac down to clean, LLM-ready Markdown. Filters formatting away from PDFs, Word, PowerPoint, Excel, images, audio, and more. Runs locally — powered by Microsoft MarkItDown and poppler.",
+  "description": "Convert any file on your Mac into clean, token-lean Markdown for Claude, Cursor, and ChatGPT. Strips PDF bloat, structures slide decks by slide, bulk-converts folders, and fetches YouTube transcripts. Runs locally — no uploads, no API keys.",
   "icon": "icon.png",
   "author": "njoshi",
   "categories": [
@@ -26,7 +26,7 @@
     {
       "name": "convert",
       "title": "Convert to Markdown",
-      "subtitle": "Sift",
+      "subtitle": "Convert files for LLMs",
       "description": "Search any file on your Mac by name (or its folder) and sift it into clean Markdown.",
       "mode": "view",
       "keywords": [
@@ -41,6 +41,54 @@
         "xlsx",
         "epub",
         "to markdown"
+      ]
+    },
+    {
+      "name": "convert-selected",
+      "title": "Convert Selected File in Finder",
+      "subtitle": "Convert files for LLMs",
+      "description": "Convert the file(s) currently selected in Finder to Markdown — no typing.",
+      "mode": "no-view",
+      "keywords": [
+        "sift",
+        "finder",
+        "selected",
+        "selection",
+        "convert",
+        "markdown"
+      ]
+    },
+    {
+      "name": "convert-latest",
+      "title": "Convert Latest Download",
+      "subtitle": "Convert files for LLMs",
+      "description": "Convert the most recently modified file in ~/Downloads to Markdown.",
+      "mode": "no-view",
+      "keywords": [
+        "sift",
+        "latest",
+        "download",
+        "downloads",
+        "newest",
+        "recent",
+        "convert",
+        "markdown"
+      ]
+    },
+    {
+      "name": "convert-youtube",
+      "title": "Convert YouTube URL from Clipboard",
+      "subtitle": "Convert files for LLMs",
+      "description": "Read a YouTube URL from the clipboard, fetch its captions via yt-dlp, and save a clean Markdown transcript.",
+      "mode": "no-view",
+      "keywords": [
+        "sift",
+        "youtube",
+        "transcript",
+        "captions",
+        "subtitles",
+        "video",
+        "yt-dlp"
       ]
     }
   ],
@@ -100,6 +148,15 @@
       "title": "Clipboard",
       "label": "Also copy the Markdown to the clipboard",
       "description": "When enabled, copies the converted Markdown content to your clipboard after each conversion.",
+      "default": true
+    },
+    {
+      "name": "addFrontmatter",
+      "type": "checkbox",
+      "required": false,
+      "title": "Frontmatter",
+      "label": "Prepend YAML frontmatter to the output",
+      "description": "When enabled, adds a YAML frontmatter block with source path, timestamp, and conversion mode to every Markdown output.",
       "default": true
     }
   ],

@@ -1,30 +1,12 @@
-import {
-  Action,
-  ActionPanel,
-  Clipboard,
-  Color,
-  Icon,
-  List,
-  Toast,
-  getPreferenceValues,
-  open,
-  showInFinder,
-  showToast,
-} from "@raycast/api";
+import { Action, ActionPanel, Clipboard, Color, Icon, List, Toast, getPreferenceValues, showToast } from "@raycast/api";
 import { useCachedState, useExec } from "@raycast/utils";
 import { existsSync, statSync } from "fs";
 import { readFile } from "fs/promises";
 import { homedir } from "os";
 import { basename, dirname, extname } from "path";
 import { useCallback, useMemo, useState } from "react";
-import {
-  ConvertResult,
-  Preferences,
-  binaryExistsOrOnPath,
-  resolveBinaryPath,
-  resolveOutputPath,
-  runMarkitdown,
-} from "./utils";
+import { Preferences, extractH1Outline, resolveOutputPath } from "./utils";
+import { runConvertCommand } from "./run-convert-command";
 import { useSpotlightSearch } from "./useSpotlightSearch";
 
 const SUPPORTED_EXTS = new Set([
@@ -78,6 +60,7 @@ type FileEntry = {
   mtime: number;
   outputPath: string;
   alreadyConverted: boolean;
+  isStale: boolean;
 };
 
 function getExt(path: string): string {
@@ -116,7 +99,18 @@ function formatTimeSince(ms: number): string {
 
 function buildEntry(path: string, mtime: number, preferences: Preferences): FileEntry {
   const outputPath = resolveOutputPath(path, preferences);
-  return { path, mtime, outputPath, alreadyConverted: existsSync(outputPath) };
+  const alreadyConverted = existsSync(outputPath);
+  let isStale = false;
+  if (alreadyConverted) {
+    try {
+      const sourceMtime = mtime || statSync(path).mtimeMs;
+      const outputMtime = statSync(outputPath).mtimeMs;
+      isStale = sourceMtime > outputMtime + 1000; // 1s grace for filesystem rounding
+    } catch {
+      // unreadable — treat as not stale
+    }
+  }
+  return { path, mtime, outputPath, alreadyConverted, isStale };
 }
 
 function safeMtime(path: string): number {
@@ -124,16 +118,6 @@ function safeMtime(path: string): number {
     return statSync(path).mtimeMs;
   } catch {
     return 0;
-  }
-}
-
-function approxTokens(path: string): string {
-  try {
-    const tokens = Math.round(statSync(path).size / 4);
-    if (tokens >= 1000) return `~${(tokens / 1000).toFixed(1)}k tokens`;
-    return `~${tokens} tokens`;
-  } catch {
-    return "";
   }
 }
 
@@ -151,10 +135,17 @@ function FileEntryItem({
   const ext = getExt(entry.path);
   const accessories: List.Item.Accessory[] = [];
   if (entry.alreadyConverted) {
-    accessories.push({
-      icon: { source: Icon.CheckCircle, tintColor: Color.Green },
-      tooltip: "Markdown already exists",
-    });
+    if (entry.isStale) {
+      accessories.push({
+        icon: { source: Icon.ExclamationMark, tintColor: Color.Yellow },
+        tooltip: "Markdown is older than the source — re-convert recommended",
+      });
+    } else {
+      accessories.push({
+        icon: { source: Icon.CheckCircle, tintColor: Color.Green },
+        tooltip: "Markdown already exists",
+      });
+    }
   }
   if (entry.mtime) {
     accessories.push({
@@ -172,7 +163,12 @@ function FileEntryItem({
       accessories={accessories}
       actions={
         <ActionPanel>
-          {entry.alreadyConverted ? (
+          {entry.alreadyConverted && entry.isStale ? (
+            <>
+              <Action title="Re-convert Updated Source" icon={Icon.Wand} onAction={() => onConvert(entry)} />
+              <Action.Open title="Open Existing Markdown" target={entry.outputPath} icon={Icon.Document} />
+            </>
+          ) : entry.alreadyConverted ? (
             <>
               <Action.Open title="Open Existing Markdown" target={entry.outputPath} icon={Icon.Document} />
               <Action
@@ -187,6 +183,32 @@ function FileEntryItem({
           )}
           <Action.Open title="Open Source File" target={entry.path} icon={Icon.Eye} />
           <Action.ShowInFinder path={entry.path} />
+          {entry.alreadyConverted ? (
+            <Action
+              title="Copy Outline of Headings"
+              icon={Icon.List}
+              shortcut={{ modifiers: ["cmd", "shift"], key: "o" }}
+              onAction={async () => {
+                try {
+                  const md = await readFile(entry.outputPath, "utf-8");
+                  const titles = extractH1Outline(md);
+                  if (titles.length === 0) {
+                    await showToast({ style: Toast.Style.Failure, title: "No headings found in Markdown" });
+                    return;
+                  }
+                  const outline = titles.map((t, i) => `${i + 1}. ${t}`).join("\n");
+                  await Clipboard.copy(outline);
+                  await showToast({ style: Toast.Style.Success, title: `Outline copied — ${titles.length} headings` });
+                } catch (err) {
+                  await showToast({
+                    style: Toast.Style.Failure,
+                    title: "Couldn't read Markdown",
+                    message: err instanceof Error ? err.message : String(err),
+                  });
+                }
+              }}
+            />
+          ) : null}
           <Action.CopyToClipboard
             title="Copy File Path"
             content={entry.path}
@@ -232,13 +254,14 @@ export default function Command() {
 
   const handleConvert = useCallback(
     async (entry: FileEntry) => {
-      const result = await convertOne(entry.path, preferences);
-      if (result?.ok) {
-        addToHistory(entry.path, result.output);
-        setRefreshTick((t) => t + 1);
-      }
+      await runConvertCommand(entry.path, {
+        onSuccess: (result) => {
+          addToHistory(result.source, result.output);
+          setRefreshTick((t) => t + 1);
+        },
+      });
     },
-    [preferences, addToHistory],
+    [addToHistory],
   );
 
   const { data: searchPaths, isLoading: isSearchLoading } = useSpotlightSearch(query, {
@@ -260,12 +283,26 @@ export default function Command() {
     void refreshTick;
     return history
       .filter((r) => existsSync(r.source))
-      .map((r) => ({
-        path: r.source,
-        mtime: r.convertedAt,
-        outputPath: r.output,
-        alreadyConverted: existsSync(r.output),
-      }));
+      .map((r) => {
+        const alreadyConverted = existsSync(r.output);
+        let isStale = false;
+        if (alreadyConverted) {
+          try {
+            const sourceMtime = statSync(r.source).mtimeMs;
+            const outputMtime = statSync(r.output).mtimeMs;
+            isStale = sourceMtime > outputMtime + 1000;
+          } catch {
+            // unreadable — treat as not stale
+          }
+        }
+        return {
+          path: r.source,
+          mtime: r.convertedAt,
+          outputPath: r.output,
+          alreadyConverted,
+          isStale,
+        };
+      });
   }, [history, refreshTick]);
 
   const searchEntries: FileEntry[] = useMemo(() => {
@@ -370,70 +407,4 @@ export default function Command() {
       )}
     </List>
   );
-}
-
-async function convertOne(path: string, preferences: Preferences): Promise<ConvertResult | null> {
-  const binary = resolveBinaryPath(preferences);
-
-  if (!binaryExistsOrOnPath(binary)) {
-    await showToast({
-      style: Toast.Style.Failure,
-      title: "MarkItDown not found",
-      message: "Install with: uv tool install 'markitdown[all]'",
-    });
-    return null;
-  }
-
-  await showToast({
-    style: Toast.Style.Animated,
-    title: `Converting ${basename(path)}…`,
-  });
-
-  const output = resolveOutputPath(path, preferences);
-  const result = await runMarkitdown(path, output, binary);
-
-  if (!result.ok) {
-    await showToast({
-      style: Toast.Style.Failure,
-      title: "Conversion failed",
-      message: result.error ?? "Unknown error",
-    });
-    return result;
-  }
-
-  if (preferences.copyToClipboard) {
-    try {
-      const content = await readFile(result.output, "utf-8");
-      await Clipboard.copy(content);
-    } catch {
-      // non-fatal
-    }
-  }
-
-  if (preferences.openAfterConvert) {
-    await open(result.output);
-  }
-
-  const tokens = approxTokens(result.output);
-  await showToast({
-    style: Toast.Style.Success,
-    title: `Converted ${basename(result.source)}`,
-    message: tokens ? `→ ${basename(result.output)} · ${tokens}` : `→ ${basename(result.output)}`,
-    primaryAction: {
-      title: "Show in Finder",
-      onAction: async (toast) => {
-        await showInFinder(result.output);
-        await toast.hide();
-      },
-    },
-    secondaryAction: {
-      title: "Open Markdown",
-      onAction: async (toast) => {
-        await open(result.output);
-        await toast.hide();
-      },
-    },
-  });
-
-  return result;
 }

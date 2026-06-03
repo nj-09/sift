@@ -17,7 +17,9 @@ type ExtensionPreferences = {
   /** After Conversion - When enabled, opens the converted Markdown file in your default app. */
   "openAfterConvert": boolean,
   /** Clipboard - When enabled, copies the converted Markdown content to your clipboard after each conversion. */
-  "copyToClipboard": boolean
+  "copyToClipboard": boolean,
+  /** Frontmatter - When enabled, adds a YAML frontmatter block with source path, timestamp, and conversion mode to every Markdown output. */
+  "addFrontmatter": boolean
 }
 
 /** Preferences accessible in all the extension's commands */
@@ -26,10 +28,22 @@ declare type Preferences = ExtensionPreferences
 declare namespace Preferences {
   /** Preferences accessible in the `convert` command */
   export type Convert = ExtensionPreferences & {}
+  /** Preferences accessible in the `convert-selected` command */
+  export type ConvertSelected = ExtensionPreferences & {}
+  /** Preferences accessible in the `convert-latest` command */
+  export type ConvertLatest = ExtensionPreferences & {}
+  /** Preferences accessible in the `convert-youtube` command */
+  export type ConvertYoutube = ExtensionPreferences & {}
 }
 
 declare namespace Arguments {
   /** Arguments passed to the `convert` command */
   export type Convert = {}
+  /** Arguments passed to the `convert-selected` command */
+  export type ConvertSelected = {}
+  /** Arguments passed to the `convert-latest` command */
+  export type ConvertLatest = {}
+  /** Arguments passed to the `convert-youtube` command */
+  export type ConvertYoutube = {}
 }
 
